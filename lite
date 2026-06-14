@@ -12,7 +12,7 @@ cfg_tor_swap = {'options': {'defaultType': 'swap'}, 'proxies': {'http': TOR_PROX
 # Карта системных имен классов CCXT для приведения к единому стандарту
 EXCHANGE_CLASSES = {
     #'Bybit': ('bybit', 'bybit'),
-    # 'Binance': ('binance', 'binance'),
+    #'Binance': ('binance', 'binance'),
     'OKX': ('okx', 'okx'),
     'KuCoin': ('kucoin', 'kucoinfutures'),
     'MEXC': ('mexc', 'mexc'),
@@ -34,10 +34,13 @@ for name, (spot_class, swap_class) in EXCHANGE_CLASSES.items():
         spot_exchanges[name] = getattr(ccxt, spot_class)({'options': {'defaultType': 'spot'}})
         swap_exchanges[name] = getattr(ccxt, swap_class)({'options': {'defaultType': 'swap'}})
 
-# ДОБАВЛЕНО: Белый список. Если он не пустой, скрипт берет пары ТОЛЬКО из него.
 ALLOWLIST = {}
 
-BLOCKLIST = {'B/USDT', 'USDE/USDT', 'FDUSD/USDT', 'BUSD/USDT', 'TUSD/USDT', 'EUR/USDT', 'GBP/USDT', 'RUB/USDT', 'DAI/USDT','AI/USDT', 'BTR/USDT'}
+BLOCKLIST = {
+    'B/USDT', 'USDE/USDT', 'FDUSD/USDT', 'BUSD/USDT', 'TUSD/USDT', 
+    'EUR/USDT', 'GBP/USDT', 'RUB/USDT', 'DAI/USDT',
+    'AI/USDT', 'BTR/USDT'
+}
 MAX_ALLOWED_SPREAD = 300.0
 
 print("Инициализация справочников рынков...")
@@ -48,7 +51,7 @@ for name in spot_exchanges.keys():
         spot_exchanges[name].load_markets()
         swap_exchanges[name].load_markets()
     except Exception as e:
-        print(f"Препреждение при загрузке {name}: {e}")
+        print(f"Предупреждение при загрузке {name}: {e}")
 
 print("✅ Инициализация завершена успешно! Запуск мониторинга...")
 
@@ -72,7 +75,6 @@ while True:
                             quote = 'USDT' if is_usdt else 'USDC'
                             pair_name = f"{base_clean}/{quote}"
                             
-                            # ИСПРАВЛЕНИЕ: Логика фильтрации по ALLOWLIST и BLOCKLIST
                             if pair_name not in BLOCKLIST and v.get('last'):
                                 if not ALLOWLIST or pair_name in ALLOWLIST:
                                     spot_data.append({'Para': pair_name, 'spot_ex': name, 'p_spot': float(v['last'])})
@@ -92,7 +94,6 @@ while True:
                             quote = 'USDT' if is_usdt_fut else 'USDC'
                             pair_name = f"{base_clean}/{quote}"
                             
-                            # ИСПРАВЛЕНИЕ: Логика фильтрации по ALLOWLIST и BLOCKLIST для фьючерсов
                             if pair_name not in BLOCKLIST and v.get('last'):
                                 if not ALLOWLIST or pair_name in ALLOWLIST:
                                     swap_data.append({'Para': pair_name, 'fut_ex': name, 'p_fut': float(v['last']), 'target_symbol': k})
@@ -132,8 +133,7 @@ while True:
                 if f_rate is None and ex_name in ['KuCoin', 'Gate.io', 'OKX']:
                     try:
                         f_info = swap_exchanges[ex_name].fetch_funding_rate(sym)
-                        if f_info is not None:
-                            f_rate = f_info.get('fundingRate')
+                        if f_info is not None: f_rate = f_info.get('fundingRate')
                     except: pass
 
                 if f_rate is not None:
@@ -147,10 +147,14 @@ while True:
                 p_fut_raw = row['p_fut']
                 p_fut_formatted = f"{p_fut_raw:.6f}".rstrip('0').rstrip('.')
 
+                # Компактное отображение бирж
+                ex_display = row['spot_ex'] if row['spot_ex'] == ex_name else f"{row['spot_ex']} < {ex_name}"
+
+                # Столбец Спред полностью восстановлен с вашим оригинальным форматированием
                 final_rows.append({
                     '#': row_number,
                     'Пара': row['Para'],
-                    'Биржи': f"{row['spot_ex']} < {ex_name}",
+                    'Биржи': ex_display,
                     'Спред': f"{SOFT_YELLOW}{row['Спред (%)']:.2f}%{RESET}",
                     'Спот 🟢': p_spot_formatted,
                     'Фьюч 🔴': p_fut_formatted,
@@ -161,7 +165,7 @@ while True:
             df_final = pd.DataFrame(final_rows)
             current_time = time.strftime("%H:%M:%S")
             print(f"🔄 Обновлено: {current_time} (Пауза 30 сек)")
-            print("🔥 ТОП-20 КОМБИНАЦИЙ СПРЕДОВ (Bybit, OKX, KuCoin, MEXC, Gate.io):")
+            print("🔥 ТОП-20 КОМБИНАЦИЙ СПРЕДОВ (Bybit, Binance, OKX, KuCoin, MEXC, Gate.io):")
             print(df_final.to_markdown(index=False, tablefmt='padded', colalign=('center', 'left', 'center', 'center', 'left', 'left', 'center')))
         else:
             print("⚠ Нет подходящих пар, где фьючерс дороже спота.")
