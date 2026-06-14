@@ -1,0 +1,8 @@
+# Устанавливаем и запускаем фоновую службу TOR в операционной системе Google Colab
+!apt-get update -y > /dev/null
+!apt-get install tor -y > /dev/null
+!service tor start  # Запускает TOR на порту 9050
+
+# Ставим нужные библиотеки для Python
+!pip install python-socks requests[socks] ccxt tabulate -q
+print("✅ TOR успешно запущен, библиотеки установлены!")
