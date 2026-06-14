@@ -37,11 +37,7 @@ for name, (spot_class, swap_class) in EXCHANGE_CLASSES.items():
 # ДОБАВЛЕНО: Белый список. Если он не пустой, скрипт берет пары ТОЛЬКО из него.
 ALLOWLIST = {}
 
-BLOCKLIST = {
-    'USDE/USDT', 'FDUSD/USDT', 'BUSD/USDT', 'TUSD/USDT', 
-    'EUR/USDT', 'GBP/USDT', 'RUB/USDT', 'DAI/USDT',
-    'AI/USDT', 'BTR/USDT'
-}
+BLOCKLIST = {'B/USDT', 'USDE/USDT', 'FDUSD/USDT', 'BUSD/USDT', 'TUSD/USDT', 'EUR/USDT', 'GBP/USDT', 'RUB/USDT', 'DAI/USDT','AI/USDT', 'BTR/USDT'}
 MAX_ALLOWED_SPREAD = 300.0
 
 print("Инициализация справочников рынков...")
@@ -133,10 +129,10 @@ while True:
 
                 f_rate = funding_rates.get((ex_name, sym))
 
-                if f_rate is None and ex_name in ['KuCoin', 'Gate.io']:
+                if f_rate is None and ex_name in ['KuCoin', 'Gate.io', 'OKX']:
                     try:
                         f_info = swap_exchanges[ex_name].fetch_funding_rate(sym)
-                        if f_info is not None: 
+                        if f_info is not None:
                             f_rate = f_info.get('fundingRate')
                     except: pass
 
