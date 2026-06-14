@@ -2,6 +2,7 @@ import ccxt
 import pandas as pd
 import time
 from datetime import datetime, timezone
+from IPython.display import clear_output
 
 TOR_PROXY = 'socks5://127.0.0.1:9050'
 
