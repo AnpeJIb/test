@@ -1,1 +1,145 @@
 
+import ccxt
+import pandas as pd
+import time
+from IPython.display import clear_output
+
+TOR_PROXY = 'socks5://127.0.0.1:9050'
+
+# Настройки TOR-прокси для бирж с региональными ограничениями (Bybit, Binance)
+cfg_tor_spot = {'options': {'defaultType': 'spot'}, 'proxies': {'http': TOR_PROXY, 'https': TOR_PROXY}, 'timeout': 30000}
+cfg_tor_swap = {'options': {'defaultType': 'swap'}, 'proxies': {'http': TOR_PROXY, 'https': TOR_PROXY}, 'timeout': 30000}
+
+# Инициализируем 5 бирж: Bybit и Binance через TOR, остальные — напрямую
+spot_exchanges = {
+    'Bybit': ccxt.bybit(cfg_tor_spot),
+    'Binance': ccxt.binance(cfg_tor_spot),
+    'OKX': ccxt.okx({'options': {'defaultType': 'spot'}}),
+    'KuCoin': ccxt.kucoin({'options': {'defaultType': 'spot'}}),
+    'MEXC': ccxt.mexc({'options': {'defaultType': 'spot'}})
+}
+swap_exchanges = {
+    'Bybit': ccxt.bybit(cfg_tor_swap),
+    'Binance': ccxt.binance(cfg_tor_swap),
+    'OKX': ccxt.okx({'options': {'defaultType': 'swap'}}),
+    'KuCoin': ccxt.kucoinfutures({}),
+    'MEXC': ccxt.mexc({'options': {'defaultType': 'swap'}})
+}
+
+BLOCKLIST = {'USDC', 'USDE', 'FDUSD', 'BUSD', 'TUSD', 'EUR', 'GBP', 'RUB', 'DAI'}
+MAX_ALLOWED_SPREAD = 300.0
+
+print("Инициализация справочников рынков...")
+for name in spot_exchanges.keys():
+    try:
+        if name in ['Bybit', 'Binance']:
+            print(f" -> Подключение к {name} через TOR (может занять до 15 сек)...")
+        spot_exchanges[name].load_markets()
+        swap_exchanges[name].load_markets()
+    except Exception as e:
+        print(f"Предупреждение при загрузке {name}: {e}")
+
+print("✅ Инициализация завершена успешно! Запуск мониторинга...")
+
+while True:
+    try:
+        spot_data, swap_data, funding_rates = [], [], {}
+
+        # 1. Быстрый пакетный сбор данных через fetch_tickers
+        for name in spot_exchanges.keys():
+            try:
+                raw_spot = spot_exchanges[name].fetch_tickers()
+                if raw_spot:
+                    for k, v in raw_spot.items():
+                        if k.endswith('/USDT') and spot_exchanges[name].markets.get(k, {}).get('spot'):
+                            base = spot_exchanges[name].markets[k]['base']
+                            base_clean = base.replace('1000000000', '').replace('1000000', '').replace('100000', '').replace('10000', '').replace('1000', '').replace('100', '').replace('2', '').replace('3', '').replace('5', '')
+                            if base_clean not in BLOCKLIST and v.get('last'):
+                                spot_data.append({'Moneta': base_clean, 'spot_ex': name, 'p_spot': float(v['last'])})
+            except: pass
+
+            try:
+                raw_swap = swap_exchanges[name].fetch_tickers()
+                if raw_swap:
+                    for k, v in raw_swap.items():
+                        if (k.endswith('/USDT:USDT') or k.endswith('/USDT')) and swap_exchanges[name].markets.get(k, {}).get('swap'):
+                            base = swap_exchanges[name].markets[k]['base']
+                            base_clean = base.replace('1000000000', '').replace('1000000', '').replace('100000', '').replace('10000', '').replace('1000', '').replace('100', '').replace('2', '').replace('3', '').replace('5', '')
+                            if v.get('last'):
+                                swap_data.append({'Moneta': base_clean, 'fut_ex': name, 'p_fut': float(v['last']), 'target_symbol': k})
+
+                                # Попутно собираем фандинг из тикера
+                                f_rate = v.get('fundingRate') or v.get('info', {}).get('fundingRate') or v.get('info', {}).get('lastFundingRate')
+                                if f_rate is not None:
+                                    funding_rates[(name, k)] = float(f_rate)
+            except: pass
+
+        # 2. Высокоскоростное объединение и фильтрация через Pandas
+        if spot_data and swap_data:
+            df_spot = pd.DataFrame(spot_data)
+            df_swap = pd.DataFrame(swap_data)
+
+            df_merged = pd.merge(df_spot, df_swap, on='Moneta')
+            df_merged['Спред (%)'] = ((df_merged['p_fut'] - df_merged['p_spot']) / df_merged['p_spot']) * 100
+            df_filtered = df_merged[(df_merged['p_fut'] > df_merged['p_spot']) & (df_merged['Спред (%)'] <= MAX_ALLOWED_SPREAD)]
+        else:
+            df_filtered = pd.DataFrame()
+
+        clear_output(wait=True)
+
+        # 3. Форматирование ТОП-20 результатов и вывод таблицы
+        if not df_filtered.empty:
+            top_20_df = df_filtered.sort_values(by='Спред (%)', ascending=False).head(20)
+
+            RED, BLUE, SOFT_YELLOW, RESET = '\033[91m', '\033[94m', '\033[33m', '\033[0m'
+            final_rows = []
+            row_number = 1
+
+            for _, row in top_20_df.iterrows():
+                ex_name = row['fut_ex']
+                sym = row['target_symbol']
+
+                f_rate = funding_rates.get((ex_name, sym))
+
+                if f_rate is None and ex_name == 'KuCoin':
+                    try:
+                        f_info = swap_exchanges['KuCoin'].fetch_funding_rate(sym)
+                        if f_info is not None: f_rate = f_info.get('fundingRate')
+                    except: pass
+
+                if f_rate is not None:
+                    f_val = float(f_rate)
+                    f_pct_str = f"{f_val * 100:.2f}%"
+                    f_color_str = f"{RED}{f_pct_str}{RESET}" if f_val > 0 else (f"{BLUE}{f_pct_str}{RESET}" if f_val < 0 else f_pct_str)
+                else:
+                    f_color_str = "Н/Д"
+
+                p_spot_formatted = f"{row['p_spot']:.6f}".rstrip('0').rstrip('.')
+                p_fut_raw = row['p_fut']
+                p_fut_formatted = f"{p_fut_raw:.6f}".rstrip('0').rstrip('.')
+
+                final_rows.append({
+                    '#': row_number,
+                    'Монета': row['Moneta'],
+                    'Спред': f"{SOFT_YELLOW}{row['Спред (%)']:.2f}%{RESET}",
+                    'Спот 🟢': p_spot_formatted,
+                    'Биржи': f"{row['spot_ex']} < {ex_name}",
+                    'Фьюч 🔴': p_fut_formatted,
+                    'Фандинг': f_color_str
+                })
+                row_number += 1
+
+            df_final = pd.DataFrame(final_rows)
+            current_time = time.strftime("%H:%M:%S")
+            print(f"🔄 Обновлено: {current_time} (Пауза 30 сек)")
+            print("🔥 ТОП-20 КОМБИНАЦИЙ СПРЕДОВ (Bybit, Binance, OKX, KuCoin, MEXC):")
+            print(df_final.to_markdown(index=False, tablefmt='padded', colalign=('center', 'left', 'center', 'left', 'center', 'left', 'center')))
+        else:
+            print("⚠ Нет подходящих пар, где фьючерс дороже спота.")
+
+    except Exception as global_error:
+        print(f"⚠ Системная ошибка: {global_error}. Перезапуск через 5 сек...")
+        time.sleep(5)
+        continue
+
+    time.sleep(30)
