@@ -1,7 +1,7 @@
 import ccxt
 import pandas as pd
 import time
-from datetime import datetime, timezone
+import re
 from IPython.display import clear_output
 
 TOR_PROXY = 'socks5://127.0.0.1:9050'
@@ -11,27 +11,26 @@ cfg_tor_swap = {'options': {'defaultType': 'swap'}, 'proxies': {'http': TOR_PROX
 
 spot_exchanges = {
     'Bybit': ccxt.bybit(cfg_tor_spot),
-    #'Binance': ccxt.binance(cfg_tor_spot),
-    #'OKX': ccxt.okx({'options': {'defaultType': 'spot'}}),
+    'Binance': ccxt.binance(cfg_tor_spot),
+    'OKX': ccxt.okx({'options': {'defaultType': 'spot'}}),
     'KuCoin': ccxt.kucoin({'options': {'defaultType': 'spot'}}),
     'MEXC': ccxt.mexc({'options': {'defaultType': 'spot'}})
 }
+
 swap_exchanges = {
     'Bybit': ccxt.bybit(cfg_tor_swap),
-    #'Binance': ccxt.binance(cfg_tor_swap),
-    #'OKX': ccxt.okx({'options': {'defaultType': 'swap'}}),
+    'Binance': ccxt.binance(cfg_tor_swap),
+    'OKX': ccxt.okx({'options': {'defaultType': 'swap'}}),
     'KuCoin': ccxt.kucoinfutures({}),
     'MEXC': ccxt.mexc({'options': {'defaultType': 'swap'}})
 }
 
-BLOCKLIST = {'USDE', 'FDUSD', 'BUSD', 'TUSD', 'EUR', 'GBP', 'RUB', 'DAI'}
+BLOCKLIST = {'USDC', 'USDE', 'FDUSD', 'BUSD', 'TUSD', 'EUR', 'GBP', 'RUB', 'DAI'}
 MAX_ALLOWED_SPREAD = 300.0
 
 print("Инициализация справочников рынков...")
 for name in spot_exchanges.keys():
     try:
-        if name in ['Bybit', 'Binance']:
-            print(f" -> Подключение к {name} через TOR (может занять до 15 сек)...")
         spot_exchanges[name].load_markets()
         swap_exchanges[name].load_markets()
     except Exception as e:
@@ -41,85 +40,47 @@ print("✅ Инициализация завершена успешно! Зап�
 
 while True:
     try:
-        spot_data, swap_data, funding_rates, countdown_timers = [], [], {}, {}
+        spot_data, swap_data, funding_rates = [], [], {}
 
+        # 1. Быстрый пакетный сбор данных через fetch_tickers
         for name in spot_exchanges.keys():
+            # Парсинг спота
             try:
                 raw_spot = spot_exchanges[name].fetch_tickers()
                 if raw_spot:
                     for k, v in raw_spot.items():
-                        if spot_exchanges[name].markets.get(k, {}).get('spot'):
-                            m_info = spot_exchanges[name].markets[k]
-                            base = m_info['base']
-                            quote = m_info['quote']
-
-                            if base not in BLOCKLIST and quote in ['USDT', 'USDC'] and v.get('last'):
-                                spot_data.append({
-                                    'MonetaKey': f"{base}/{quote}",
-                                    'spot_ex': name,
-                                    'p_spot': float(v['last'])
-                                })
+                        if k.endswith('/USDT') and spot_exchanges[name].markets.get(k, {}).get('spot'):
+                            base = spot_exchanges[name].markets[k]['base']
+                            # Убираем числовые префиксы (например, 1000LUNC -> LUNC)
+                            base_clean = re.sub(r'^\d+', '', base)
+                            if base_clean not in BLOCKLIST and v.get('last') and float(v['last']) > 0:
+                                spot_data.append({'Moneta': base_clean, 'spot_ex': name, 'p_spot': float(v['last'])})
             except: pass
 
+            # Парсинг фьючерсов
             try:
                 raw_swap = swap_exchanges[name].fetch_tickers()
                 if raw_swap:
                     for k, v in raw_swap.items():
-                        if swap_exchanges[name].markets.get(k, {}).get('swap'):
-                            m_info = swap_exchanges[name].markets[k]
-                            base = m_info['base']
-                            clean_quote = m_info['quote'].split(':')[0]
+                        if (k.endswith('/USDT:USDT') or k.endswith('/USDT')) and swap_exchanges[name].markets.get(k, {}).get('swap'):
+                            base = swap_exchanges[name].markets[k]['base']
+                            base_clean = re.sub(r'^\d+', '', base)
+                            if v.get('last') and float(v['last']) > 0:
+                                swap_data.append({'Moneta': base_clean, 'fut_ex': name, 'p_fut': float(v['last']), 'target_symbol': k})
 
-                            if clean_quote in ['USDT', 'USDC'] and v.get('last'):
-                                clean_base = base.replace('1000000', '').replace('100000', '').replace('1000', '')
-
-                                swap_data.append({
-                                    'MonetaKey': f"{clean_base}/{clean_quote}",
-                                    'fut_ex': name,
-                                    'p_fut': float(v['last']),
-                                    'target_symbol': k
-                                })
-
+                                # Извлекаем только ставку фандинга
                                 f_rate = v.get('fundingRate') or v.get('info', {}).get('fundingRate') or v.get('info', {}).get('lastFundingRate')
                                 if f_rate is not None:
                                     funding_rates[(name, k)] = float(f_rate)
-
-                                # --- РАСЧЕТ ТАЙМЕРА ОБРАТНОГО ОТСЧЕТА (COUNTDOWN) ---
-                                next_funding_ms = None
-                                raw_info = v.get('info', {})
-
-                                if name == 'Bybit':
-                                    # Bybit возвращает временную метку в миллисекундах в поле nextFundingTime
-                                    if raw_info.get('nextFundingTime'):
-                                        next_funding_ms = int(raw_info['nextFundingTime'])
-                                elif name == 'MEXC':
-                                    # MEXC возвращает временную метку в миллисекундах в поле nextSettleTime
-                                    if raw_info.get('nextSettleTime'):
-                                        next_funding_ms = int(raw_info['nextSettleTime'])
-
-                                if next_funding_ms is None and v.get('nextFundingTime'):
-                                    next_funding_ms = int(v['nextFundingTime'])
-
-                                countdown_str = "Н/Д"
-                                if next_funding_ms:
-                                    now_ms = int(time.time() * 1000)
-                                    diff_sec = int((next_funding_ms - now_ms) / 1000)
-                                    if diff_sec > 0:
-                                        hours = diff_sec // 3600
-                                        minutes = (diff_sec % 3600) // 60
-                                        seconds = diff_sec % 60
-                                        countdown_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                                    else:
-                                        countdown_str = "00:00:00"
-
-                                countdown_timers[(name, k)] = countdown_str
             except: pass
 
+        # 2. Высокоскоростное объединение и фильтрация через Pandas
         if spot_data and swap_data:
             df_spot = pd.DataFrame(spot_data)
             df_swap = pd.DataFrame(swap_data)
 
-            df_merged = pd.merge(df_spot, df_swap, on='MonetaKey')
+            df_merged = pd.merge(df_spot, df_swap, on='Moneta')
+            df_merged = df_merged[df_merged['p_spot'] > 0]
             df_merged['Спред (%)'] = ((df_merged['p_fut'] - df_merged['p_spot']) / df_merged['p_spot']) * 100
             df_filtered = df_merged[(df_merged['p_fut'] > df_merged['p_spot']) & (df_merged['Спред (%)'] <= MAX_ALLOWED_SPREAD)]
         else:
@@ -127,6 +88,7 @@ while True:
 
         clear_output(wait=True)
 
+        # 3. Форматирование ТОП-20 результатов и вывод таблицы
         if not df_filtered.empty:
             top_20_df = df_filtered.sort_values(by='Спред (%)', ascending=False).head(20)
 
@@ -139,31 +101,18 @@ while True:
                 sym = row['target_symbol']
 
                 f_rate = funding_rates.get((ex_name, sym))
-
-                if f_rate is None and ex_name in ['KuCoin', 'OKX']:
-                    try:
-                        f_info = swap_exchanges[ex_name].fetch_funding_rate(sym)
-                        f_rate = f_info.get('fundingRate') or f_info.get('info', {}).get('fundingRate')
-
-                        if (ex_name, sym) not in countdown_timers and f_info.get('nextFundingTime'):
-                            diff_sec = int((int(f_info['nextFundingTime']) - int(time.time() * 1000)) / 1000)
-                            if diff_sec > 0:
-                                countdown_timers[(ex_name, sym)] = f"{diff_sec // 3600:02d}:{(diff_sec % 3600) // 60:02d}:{diff_sec % 60:02d}"
-                    except: pass
-
                 if f_rate is not None:
                     f_val = float(f_rate)
-                    f_pct_str = f"{f_val * 100:.2f}%"
+                    f_pct_str = f"{f_val * 100:.3f}%"
                     f_color_str = f"{RED}{f_pct_str}{RESET}" if f_val > 0 else (f"{BLUE}{f_pct_str}{RESET}" if f_val < 0 else f_pct_str)
                 else:
                     f_color_str = "Н/Д"
-
-                timer_final = countdown_timers.get((ex_name, sym), "Н/Д")
 
                 p_spot_formatted = f"{row['p_spot']:.6f}".rstrip('0').rstrip('.')
                 p_fut_raw = row['p_fut']
                 p_fut_formatted = f"{p_fut_raw:.6f}".rstrip('0').rstrip('.')
 
+                # Сбор лимитов
                 market_info = swap_exchanges[ex_name].markets.get(sym, {})
                 c_size = market_info.get('contractSize', 1.0)
                 max_vol = market_info.get('limits', {}).get('amount', {}).get('max') or market_info.get('info', {}).get('maxOrderQty') or market_info.get('info', {}).get('maxQty')
@@ -172,31 +121,30 @@ while True:
                 if max_vol is not None:
                     try:
                         limit_raw = float(max_vol) * float(c_size if c_size is not None else 1.0)
-                        if limit_raw is not None and p_fut_raw > 0:
+                        if limit_raw > 0 and p_fut_raw > 0:
                             limit_usd = limit_raw * p_fut_raw
                             limit_coins_str = f"{limit_raw:.0f}" if limit_raw >= 1 else f"{limit_raw:.4f}"
                             limit_usd_str = f"{limit_usd:.0f}" if limit_usd >= 1 else f"{limit_usd:.2f}"
                             limit_final_str = f"{limit_coins_str} ({limit_usd_str}$)"
                     except: pass
 
-                final_rows.append({
-                    '#': row_number,
-                    'Монета': row['MonetaKey'],
-                    'Спред': f"{SOFT_YELLOW}{row['Спред (%)']:.2f}%{RESET}",
-                    'Спот 🟢': p_spot_formatted,
-                    'Биржи': f"{row['spot_ex']} < {ex_name}",
-                    'Фьюч 🔴': p_fut_formatted,
-                    'Фандинг': f_color_str,
-                    'Отсечка': timer_final,  # Теперь здесь точный динамический Countdown (ЧЧ:ММ:СС)
-                    'Лимит': limit_final_str
-                })
+                final_rows.append([
+                    row_number,
+                    row['Moneta'],
+                    f"{SOFT_YELLOW}{row['Спред (%)']:.2f}%{RESET}",
+                    p_spot_formatted,
+                    f"{row['spot_ex']} -> {ex_name}",
+                    p_fut_formatted,
+                    f_color_str,
+                    limit_final_str
+                ])
                 row_number += 1
 
-            df_final = pd.DataFrame(final_rows)
+            headers = ['#', 'Монета', 'Спред', 'Спот 🟢', 'Биржи', 'Фьюч 🔴', 'Фандинг', 'Лимит']
             current_time = time.strftime("%H:%M:%S")
             print(f"🔄 Обновлено: {current_time} (Пауза 30 сек)")
-            print("🔥 ТОП-20 КОМБИНАЦИЙ СВЯЗОК USDT + USDC (Bybit, OKX, KuCoin, MEXC):")
-            print(df_final.to_markdown(index=False, tablefmt='padded', colalign=('center', 'left', 'center', 'left', 'center', 'left', 'center', 'center', 'left')))
+            print("🔥 ТОП-20 КОМБИНАЦИЙ СПРЕДОВ (Bybit, Binance, OKX, KuCoin, MEXC):")
+            print(pd.DataFrame(final_rows, columns=headers).to_markdown(index=False, tablefmt='grid'))
         else:
             print("⚠ Нет подходящих пар, где фьючерс дороже спота.")
 
