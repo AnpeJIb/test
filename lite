@@ -1,8 +1,5 @@
-import ccxt
-import pandas as pd
-import time
+import ccxt, time, pandas as pd
 from IPython.display import clear_output
-
 TOR_PROXY = 'socks5://127.0.0.1:9050'
 
 # Настройки TOR-прокси для бирж с региональными ограничениями (Bybit, Binance)
