@@ -74,7 +74,8 @@ while True:
 
                             if pair_name not in BLOCKLIST and v.get('last'):
                                 if not ALLOWLIST or pair_name in ALLOWLIST:
-                                    spot_data.append({'Para': pair_name, 'spot_ex': name, 'p_spot': float(v['last'])})
+                                    spot_data.append({'Para': pair_name, 'spot_ex': name, 'p_spot': float(v['last']), 'spot_bid': float(v['bid']) if v.get('bid') else float(v['last']), 'spot_ask': float(v['ask']) if v.get('ask') else float(v['last'])})
+
             except: pass
 
             try:
