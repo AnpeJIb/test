@@ -11,7 +11,7 @@ cfg_tor_swap = {'options': {'defaultType': 'swap'}, 'proxies': {'http': TOR_PROX
 
 # Карта системных имен классов CCXT для приведения к единому стандарту
 EXCHANGE_CLASSES = {
-    #'Bybit': ('bybit', 'bybit'),
+    'Bybit': ('bybit', 'bybit'),
     #'Binance': ('binance', 'binance'),
     'OKX': ('okx', 'okx'),
     'KuCoin': ('kucoin', 'kucoinfutures'),
@@ -37,7 +37,7 @@ for name, (spot_class, swap_class) in EXCHANGE_CLASSES.items():
 ALLOWLIST = {}
 
 BLOCKLIST = {
-    'B/USDT', 'USDE/USDT', 'FDUSD/USDT', 'BUSD/USDT', 'TUSD/USDT', 
+    'H/USDT', 'H/USDC', 'B/USDT', 'USDE/USDT', 'FDUSD/USDT', 'BUSD/USDT', 'TUSD/USDT', 
     'EUR/USDT', 'GBP/USDT', 'RUB/USDT', 'DAI/USDT',
     'AI/USDT', 'BTR/USDT'
 }
