@@ -94,7 +94,7 @@ while True:
 
                             if pair_name not in BLOCKLIST and v.get('last'):
                                 if not ALLOWLIST or pair_name in ALLOWLIST:
-                                    swap_data.append({'Para': pair_name, 'fut_ex': name, 'p_fut': float(v['last']), 'target_symbol': k})
+                                    swap_data.append({'Para': pair_name, 'fut_ex': name, 'p_fut': float(v['last']), 'fut_bid': float(v['bid']) if v.get('bid') else float(v['last']), 'fut_ask': float(v['ask']) if v.get('ask') else float(v['last']),'target_symbol': k})
 
                                     f_rate = v.get('fundingRate') or v.get('info', {}).get('fundingRate') or v.get('info', {}).get('lastFundingRate')
                                     if f_rate is not None:
@@ -108,7 +108,7 @@ while True:
 
             df_merged = pd.merge(df_spot, df_swap, on='Para')
             df_merged['Спред (%)'] = ((df_merged['fut_bid'] - df_merged['spot_ask']) / df_merged['spot_ask']) * 100
-            df_merged['Потери (%)'] = ((df_merged['fut_ask'] - df_merged['spot_bid']) / df_merged['spot_bid']) * 100
+            df_merged['Потери (%)'] = (((df_merged['fut_ask'] - df_merged['spot_bid']) / df_merged['spot_bid']) * 100)- df_merged['Спред (%)']
             df_filtered = df_merged[(df_merged['p_fut'] > df_merged['p_spot']) & (df_merged['Спред (%)'] <= MAX_ALLOWED_SPREAD)]
         else:
             df_filtered = pd.DataFrame()
