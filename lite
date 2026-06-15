@@ -34,7 +34,7 @@ for name, (spot_class, swap_class) in EXCHANGE_CLASSES.items():
 ALLOWLIST = {}
 
 BLOCKLIST = {
-    'H/USDT', 'H/USDC', 'B/USDT', 'USDE/USDT', 'FDUSD/USDT', 'BUSD/USDT', 'TUSD/USDT', 
+    'H/USDT', 'H/USDC', 'B/USDT', 'USDE/USDT', 'FDUSD/USDT', 'BUSD/USDT', 'TUSD/USDT',
     'EUR/USDT', 'GBP/USDT', 'RUB/USDT', 'DAI/USDT',
     'AI/USDT', 'BTR/USDT'
 }
@@ -64,14 +64,14 @@ while True:
                     for k, v in raw_spot.items():
                         is_usdt = k.endswith('/USDT')
                         is_usdc = k.endswith('/USDC')
-                        
+
                         if (is_usdt or is_usdc) and spot_exchanges[name].markets.get(k, {}).get('spot'):
                             base = spot_exchanges[name].markets[k]['base']
                             base_clean = base.replace('1000000000', '').replace('1000000', '').replace('100000', '').replace('10000', '').replace('1000', '').replace('100', '').replace('2', '').replace('3', '').replace('5', '')
-                            
+
                             quote = 'USDT' if is_usdt else 'USDC'
                             pair_name = f"{base_clean}/{quote}"
-                            
+
                             if pair_name not in BLOCKLIST and v.get('last'):
                                 if not ALLOWLIST or pair_name in ALLOWLIST:
                                     spot_data.append({'Para': pair_name, 'spot_ex': name, 'p_spot': float(v['last'])})
@@ -83,14 +83,14 @@ while True:
                     for k, v in raw_swap.items():
                         is_usdt_fut = k.endswith('/USDT:USDT') or k.endswith('/USDT')
                         is_usdc_fut = k.endswith('/USDC:USDC') or k.endswith('/USDC')
-                        
+
                         if (is_usdt_fut or is_usdc_fut) and swap_exchanges[name].markets.get(k, {}).get('swap'):
                             base = swap_exchanges[name].markets[k]['base']
                             base_clean = base.replace('1000000000', '').replace('1000000', '').replace('100000', '').replace('10000', '').replace('1000', '').replace('100', '').replace('2', '').replace('3', '').replace('5', '')
-                            
+
                             quote = 'USDT' if is_usdt_fut else 'USDC'
                             pair_name = f"{base_clean}/{quote}"
-                            
+
                             if pair_name not in BLOCKLIST and v.get('last'):
                                 if not ALLOWLIST or pair_name in ALLOWLIST:
                                     swap_data.append({'Para': pair_name, 'fut_ex': name, 'p_fut': float(v['last']), 'target_symbol': k})
@@ -106,7 +106,8 @@ while True:
             df_swap = pd.DataFrame(swap_data)
 
             df_merged = pd.merge(df_spot, df_swap, on='Para')
-            df_merged['Спред (%)'] = ((df_merged['p_fut'] - df_merged['p_spot']) / df_merged['p_spot']) * 100
+            df_merged['Спред (%)'] = ((df_merged['fut_bid'] - df_merged['spot_ask']) / df_merged['spot_ask']) * 100
+            df_merged['Потери (%)'] = ((df_merged['fut_ask'] - df_merged['spot_bid']) / df_merged['spot_bid']) * 100
             df_filtered = df_merged[(df_merged['p_fut'] > df_merged['p_spot']) & (df_merged['Спред (%)'] <= MAX_ALLOWED_SPREAD)]
         else:
             df_filtered = pd.DataFrame()
@@ -153,6 +154,7 @@ while True:
                     'Пара': row['Para'],
                     'Биржи': ex_display,
                     'Спред': f"{SOFT_YELLOW}{row['Спред (%)']:.2f}%{RESET}",
+                    'Потери': f"{row['Потери (%)']:.2f}%",
                     'Спот 🟢': p_spot_formatted,
                     'Фьюч 🔴': p_fut_formatted,
                     'Фандинг': f_color_str
@@ -163,7 +165,7 @@ while True:
             current_time = time.strftime("%H:%M:%S")
             print(f"🔄 Обновлено: {current_time} (Пауза 30 сек)")
             print("🔥 ТОП-20 КОМБИНАЦИЙ СПРЕДОВ (Bybit, Binance, OKX, KuCoin, MEXC, Gate.io):")
-            print(df_final.to_markdown(index=False, tablefmt='padded', colalign=('center', 'left', 'center', 'center', 'left', 'left', 'center')))
+            print(df_final.to_markdown(index=False, tablefmt='padded', colalign=('center', 'left', 'center','center','center', 'left', 'left', 'center')))
         else:
             print("⚠ Нет подходящих пар, где фьючерс дороже спота.")
 
