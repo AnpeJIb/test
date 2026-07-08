@@ -1,1 +1,85 @@
+import ccxt
 
+# 1. Настройки (СТРОГО SWAP)
+swap_config = {'options': {'defaultType': 'swap'}}
+
+# Инициализация бирж (исправлено на swap)
+exchange_ids = ['bybit', 'okx', 'kucoinfutures', 'mexc', 'gate']
+swap_exchanges = {}
+
+for ex_id in exchange_ids:
+    ccxt_class = getattr(ccxt, ex_id)
+    # Применяем конфиг swap ко всем
+    swap_exchanges[ex_id] = ccxt_class(swap_config)
+    print(f"Инициализирована: {ex_id} (swap)")
+
+# 2. Фильтры и загрузка рынков
+BLOCKLIST = {'UP/USDT', 'VANRY/USDT', 'USDE/USDT', 'FDUSD/USDT'}
+print("Загрузка фьючерсных рынков...")
+for name, ex in swap_exchanges.items():
+    try:
+        ex.load_markets()
+    except Exception as e:
+        print(f"Ошибка {name}: {e}")
+
+print("✅ Фьючерсы загружены!")
+
+while True:
+    try:
+        swap_data = []
+        for name, exchange in swap_exchanges.items():
+            try:
+                # Получение данных с биржи
+                tickers = exchange.fetch_tickers()
+                for k, v in tickers.items():
+                    # Фильтрация USDT/USDC (сохранена логика оригинала)
+                    if (k.endswith('/USDT:USDT') or k.endswith('/USDC:USDC')):
+                        pair_name = k.split(':')[0] # Упрощенная нормализация
+                        if pair_name not in BLOCKLIST and v.get('last'):
+                            swap_data.append({
+                                'Pair': pair_name, 'ex': name,
+                                'price': float(v['last']),
+                                'symbol': k
+                            })
+            except Exception: continue # Обработка ошибок
+        break # Для примера, в оригинале - бесконечный цикл
+    except Exception: break
+
+import pandas as pd
+
+if swap_data:
+    df_swap = pd.DataFrame(swap_data)
+    
+    # Self-join для сравнения фьючерсов
+    df_merged = pd.merge(df_swap, df_swap, on='Para', suffixes=('_spot', '_fut'))
+    
+    # Убираем сравнение биржи с самой собой
+    df_merged = df_merged[df_merged['ex_name_spot'] != df_merged['ex_name_fut']]
+    
+    # Расчет спреда и фильтрация
+    df_merged['Спред (%)'] = ((df_merged['bid_fut'] - df_merged['ask_spot']) / df_merged['ask_spot']) * 100
+    df_filtered = df_merged[(df_merged['p_fut'] > df_merged['p_spot']) & (df_merged['Спред (%)'] <= MAX_ALLOWED_SPREAD)]
+else:
+    df_filtered = pd.DataFrame()
+
+if not df_filtered.empty:
+    # 1. Отбор ТОП-20 по убыванию спреда
+    top_20_df = df_filtered.sort_values(by='Спред (%)', ascending=False).head(20)
+    
+    # 2. Форматирование данных для отображения
+    formatted_data = []
+    for i, (_, row) in enumerate(top_20_df.iterrows(), 1):
+        # Подготовка данных с цветовым выделением фандинга
+        formatted_data.append({
+            '#': i,
+            'Пара': row['Para'],
+            'Биржи': f"{row['spot_ex']} ➔ {row['fut_ex']}",
+            'Спред': f"{row['Спред (%)']:.2f}%",
+            'Фанд': funding_rates.get((row['fut_ex'], row['target_symbol']), 'Н/Д')
+        })
+
+    # 3. Вывод таблицы в консоль
+    print(f"\n🔥 ТОП-20 (Обновлено: {time.strftime('%H:%M:%S')}):")
+    print(pd.DataFrame(formatted_data).to_markdown(index=False, tablefmt='simple'))
+else:
+    print("⚠ Нет подходящих пар для арбитража.")
